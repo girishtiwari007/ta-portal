@@ -711,7 +711,7 @@ Actual: `+E.attribValue);else{var C=E.tag,P=E.tags[E.tags.length-1]||E;C.ns===P.
       </div>
       <div class="card-body">
         <div class="info-chip">
-          ℹ️ Select departure and arrival dates to count hours across days. &gt;12h = 100% | 6–12h = 70% | &lt;6h = 30%. DA % and Day/Night can be selected manually. Without an arrival date, an earlier arrival time means the next day.
+          ℹ️ DA is calculated separately for each date, ending at 24:00. Each day: &gt;12h = 100% | 6–12h = 70% | &lt;6h = 30%. Daily percentages are added for the journey. DA % and Day/Night can be selected manually. Without an arrival date, an earlier arrival time means the next day.
         </div>
         <div class="journey-section">
           <div class="journey-header">
@@ -1004,10 +1004,30 @@ function journeyMinutes(r) {
   return days * 1440 + ah * 60 + am - lh * 60 - lm;
 }
 
-function calcDAPercent(left, arrived, date, arrivalDate) {
-  const minutes = journeyMinutes({left, arrived, date, arrivalDate});
+function journeyDailyDA(r) {
+  const minutes = journeyMinutes(r);
   if (minutes === null || minutes < 0) return null;
-  return minutes > 720 ? 100 : minutes >= 360 ? 70 : 30;
+  const [year, month, date] = r.date.split('-').map(Number);
+  const [hour, minute] = r.left.split(':').map(Number);
+  let cursor = Date.UTC(year, month - 1, date, hour, minute);
+  const end = cursor + minutes * 60000;
+  const days = [];
+  // A zero-duration completed journey keeps the existing under-six-hours band.
+  if (minutes === 0) return [{date:r.date, minutes:0, percent:30}];
+  while (cursor < end) {
+    const day = new Date(cursor);
+    const midnight = Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() + 1);
+    const stop = Math.min(midnight, end);
+    const dailyMinutes = (stop - cursor) / 60000;
+    days.push({date:day.toISOString().slice(0,10), minutes:dailyMinutes,
+      percent:dailyMinutes > 720 ? 100 : dailyMinutes >= 360 ? 70 : 30});
+    cursor = stop;
+  }
+  return days;
+}
+function calcDAPercent(left, arrived, date, arrivalDate) {
+  const days = journeyDailyDA({left, arrived, date, arrivalDate});
+  return days === null ? null : days.reduce((sum, day) => sum + day.percent, 0);
 }
 
 function detectedDayNight(r) {
@@ -1041,7 +1061,18 @@ function recalcRow(i) {
   const pct = minutes === null || minutes < 0 ? null : r.daMode && r.daMode !== 'auto' ? Number(r.daMode) : autoPct;
   if (!r.dayNightMode || r.dayNightMode === 'auto') r.dayNight = detectedDayNight(r);
   const hoursEl = document.getElementById('hours_' + i);
-  if (hoursEl) hoursEl.textContent = minutes === null ? 'Enter date / times' : minutes < 0 ? 'Check arrival date' : Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm';
+  const dailyDA = journeyDailyDA(r);
+  if (hoursEl) {
+    hoursEl.textContent = '';
+    const total = document.createElement('div');
+    total.textContent = minutes === null ? 'Enter date / times' : minutes < 0 ? 'Check arrival date' : Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm';
+    hoursEl.appendChild(total);
+    if (dailyDA) dailyDA.forEach(day => {
+      const detail = document.createElement('div'); detail.style.cssText = 'font-size:10px;line-height:1.5;color:var(--steel)';
+      detail.textContent = day.date.slice(8,10) + '/' + day.date.slice(5,7) + ': ' + Math.floor(day.minutes / 60) + 'h ' + (day.minutes % 60) + 'm = ' + day.percent + '%';
+      hoursEl.appendChild(detail);
+    });
+  }
   const dayEl = document.getElementById('dn_' + i);
   if (dayEl) dayEl.options[0].textContent = 'Auto' + (r.dayNight ? ' (' + r.dayNight + ')' : '');
   const rate = getDARate() || r.daRate || 0;
@@ -1052,7 +1083,7 @@ function recalcRow(i) {
   const pctEl = document.getElementById('dpct_' + i);
   const amtEl = document.getElementById('damt_' + i);
   const rateEl = document.getElementById('drate_' + i);
-  if (pctEl) pctEl.options[0].textContent = 'Auto' + (autoPct === null ? ' (enter times)' : ' (' + autoPct + '%)');
+  if (pctEl) { pctEl.options[0].textContent = 'Auto' + (autoPct === null ? ' (enter times)' : ' (' + autoPct + '% total)'); pctEl.title = dailyDA ? dailyDA.map(day => day.date + ': ' + day.percent + '%').join(' + ') : 'Enter dates and times'; }
   if (rateEl) rateEl.value = rate;
   if (amtEl) amtEl.value = r.amount.toFixed(2);
   updateSummary();
