@@ -868,6 +868,16 @@ function designationDepartmentResult(designationValue, departmentValue, designat
   const match = departments.some(row => expectedCodes.includes(row.code));
   return {state:match ? 'match' : 'mismatch',text:(match ? 'Department / designation match.' : 'Alert: Department / designation mismatch. Please review your selection.') + '\n' + heading + '\nDepartment in designation master: ' + expectedNames.join(', ')};
 }
+let lastDepartmentMismatchPopup = '';
+function popupDesignationDepartmentMismatch() {
+  const designation = document.getElementById('designation');
+  const department = document.getElementById('branch');
+  const result = designationDepartmentResult(designation.value, department.value, designation.dataset.masterCode, department.dataset.masterCode);
+  if (result.state !== 'mismatch') { lastDepartmentMismatchPopup = ''; return; }
+  if (result.text === lastDepartmentMismatchPopup) return;
+  lastDepartmentMismatchPopup = result.text;
+  window.alert(result.text);
+}
 function verifyDesignationDepartment() {
   const box = document.getElementById('designationDepartmentCheck');
   if (!box) return;
@@ -2037,7 +2047,7 @@ function showToast(msg) {
   ['branch','designation'].forEach(id => {
     const input = document.getElementById(id);
     input.addEventListener('input', verifyDesignationDepartment);
-    input.addEventListener('change', verifyDesignationDepartment);
+    input.addEventListener('change', () => { verifyDesignationDepartment(); popupDesignationDepartmentMismatch(); });
   });
   verifyDesignationDepartment();
   // Set pay level dropdown to Level 7 and show DA rate
